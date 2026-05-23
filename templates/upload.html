@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TenderAI — Automate Your Tender Response</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; }
+.container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+
+.header { text-align: center; margin-bottom: 40px; }
+.header h1 { font-size: 2.2em; background: linear-gradient(135deg, #7c3aed, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+.header p { color: #888; font-size: 1.1em; max-width: 550px; margin: 0 auto; }
+
+.upload-zone { border: 2px dashed #333; border-radius: 16px; padding: 60px 40px; text-align: center; transition: all 0.3s; background: #111118; cursor: pointer; margin-bottom: 24px; }
+.upload-zone:hover, .upload-zone.drag { border-color: #7c3aed; background: #151520; }
+.upload-zone input { display: none; }
+.upload-icon { font-size: 3em; margin-bottom: 16px; }
+.upload-zone h3 { font-size: 1.3em; margin-bottom: 8px; color: #ccc; }
+.upload-zone small { color: #666; }
+
+.project-name { margin-bottom: 24px; }
+.project-name input { width: 100%; padding: 14px 18px; border-radius: 12px; border: 1px solid #333; background: #111118; color: #e0e0e0; font-size: 1em; }
+.project-name label { display: block; margin-bottom: 8px; color: #999; font-size: 0.9em; }
+.project-name input:focus { outline: none; border-color: #7c3aed; }
+
+.btn { display: inline-block; padding: 14px 36px; border-radius: 12px; font-size: 1em; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(135deg, #7c3aed, #3b82f6); color: white; width: 100%; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(124,58,237,0.3); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.file-list { margin-bottom: 20px; }
+.file-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #111118; border-radius: 10px; margin-bottom: 6px; border: 1px solid #222; }
+.file-item .icon { font-size: 1.3em; flex-shrink: 0; }
+.file-item .name { flex: 1; font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item .size { color: #666; font-size: 0.85em; flex-shrink: 0; }
+.file-item .remove { color: #ef4444; cursor: pointer; font-size: 1.2em; flex-shrink: 0; padding: 0 4px; }
+
+.results { margin-top: 32px; }
+.result-card { background: #111118; border-radius: 14px; padding: 24px; margin-bottom: 16px; border: 1px solid #222; }
+.result-card h3 { font-size: 1.1em; margin-bottom: 16px; color: #7c3aed; }
+.result-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1a1a22; font-size: 0.9em; }
+.result-row:last-child { border-bottom: none; }
+.result-row .label { color: #888; }
+.result-row .value { color: #e0e0e0; font-weight: 500; }
+
+.category-tag { display: inline-block; padding: 2px 10px; border-radius: 6px; font-size: 0.78em; margin-right: 6px; }
+.cat-drawing { background: #3b82f620; color: #3b82f6; }
+.cat-specification { background: #10b98120; color: #10b981; }
+.cat-schedule { background: #f59e0b20; color: #f59e0b; }
+.cat-mechanical { background: #ef444420; color: #ef4444; }
+.cat-electrical { background: #8b5cf620; color: #8b5cf6; }
+.cat-correspondence { background: #66666620; color: #999; }
+
+.equipment-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.equipment-table th { text-align: left; padding: 8px 12px; color: #888; font-size: 0.8em; font-weight: 500; border-bottom: 1px solid #222; }
+.equipment-table td { padding: 8px 12px; font-size: 0.88em; border-bottom: 1px solid #15151d; }
+.equipment-table .price { color: #10b981; font-weight: 600; }
+.equipment-table .noprice { color: #f59e0b; }
+
+.spinner { display: none; text-align: center; padding: 40px; }
+.spinner.active { display: block; }
+.spinner-inner { width: 40px; height: 40px; border: 3px solid #333; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.total-bar { background: linear-gradient(135deg, #7c3aed20, #3b82f620); border: 1px solid #7c3aed40; border-radius: 12px; padding: 16px 20px; margin-top: 16px; text-align: center; }
+.total-bar .amount { font-size: 1.6em; font-weight: 700; color: #10b981; }
+.total-bar .label { color: #888; font-size: 0.85em; margin-bottom: 4px; }
+
+@media (max-width: 600px) {
+  .container { padding: 20px 14px; }
+  .header h1 { font-size: 1.6em; }
+  .upload-zone { padding: 30px 20px; }
+  .equipment-table { font-size: 0.75em; }
+  .equipment-table th, .equipment-table td { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>🏗️ TenderAI</h1>
+    <p>Upload your tender pack — drawings, specs, schedules — and get an instant priced breakdown</p>
+  </div>
+
+  <div class="project-name">
+    <label>Project Name</label>
+    <input type="text" id="projectName" placeholder="e.g. Victoria Road Refurbishment" value="">
+  </div>
+
+  <div class="upload-zone" id="dropZone">
+    <div class="upload-icon">📂</div>
+    <h3>Drop your documents here</h3>
+    <small>PDFs, drawings, specs, equipment schedules — maximum 50MB total</small>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt,.csv,.xlsx,.docx">
+  </div>
+
+  <div class="file-list" id="fileList"></div>
+
+  <button class="btn btn-primary" id="processBtn" disabled>Process Tender</button>
+
+  <div class="spinner" id="spinner">
+    <div class="spinner-inner"></div>
+    <p>Analysing documents…<br><small>Extracting equipment, looking up prices</small></p>
+  </div>
+
+  <div class="results" id="results"></div>
+
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const processBtn = document.getElementById('processBtn');
+const spinner = document.getElementById('spinner');
+const results = document.getElementById('results');
+const projectName = document.getElementById('projectName');
+
+let selectedFiles = [];
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+function handleFiles(fileList) {
+  selectedFiles = Array.from(fileList);
+  renderFileList();
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  selectedFiles.forEach((f, i) => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const icons = { pdf: '📄', txt: '📝', csv: '📊', xlsx: '📊', docx: '📝' };
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = `
+      <span class="icon">${icons[ext] || '📎'}</span>
+      <span class="name">${f.name}</span>
+      <span class="size">${(f.size / 1024 / 1024).toFixed(1)} MB</span>
+      <span class="remove" data-idx="${i}">✕</span>
+    `;
+    fileList.appendChild(div);
+  });
+
+  document.querySelectorAll('.remove').forEach(el => {
+    el.addEventListener('click', () => {
+      selectedFiles.splice(el.dataset.idx, 1);
+      renderFileList();
+    });
+  });
+
+  processBtn.disabled = selectedFiles.length === 0;
+}
+
+processBtn.addEventListener('click', async () => {
+  processBtn.disabled = true;
+  spinner.classList.add('active');
+  results.innerHTML = '';
+
+  const form = new FormData();
+  selectedFiles.forEach(f => form.append('files', f));
+  form.append('project_name', projectName.value || 'Unnamed Project');
+
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: form });
+    const data = await resp.json();
+    renderResults(data);
+  } catch (err) {
+    results.innerHTML = `<div class="result-card"><h3>Error</h3><p>${err.message}</p></div>`;
+  } finally {
+    spinner.classList.remove('active');
+    processBtn.disabled = false;
+  }
+});
+
+function renderResults(data) {
+  let html = '';
+
+  // Classification
+  html += '<div class="result-card"><h3>📁 Document Classification</h3>';
+  data.classified.forEach(d => {
+    html += `<div class="result-row"><span>${d.filename}</span><span class="category-tag cat-${d.category}">${d.category}</span></div>`;
+  });
+  html += '</div>';
+
+  // Equipment
+  if (data.equipment_extracted.length > 0) {
+    html += '<div class="result-card"><h3>🔧 Equipment Extract</h3>';
+    html += '<div style="max-height:400px;overflow:auto;"><table class="equipment-table"><thead><tr><th>Category</th><th>Item</th><th>Est. Price</th></tr></thead><tbody>';
+    data.equipment_extracted.forEach(e => {
+      html += `<tr>
+        <td>${e.category}</td>
+        <td>${e.item}</td>
+        <td class="${e.estimated_price ? 'price' : 'noprice'}">${e.estimated_price ? '£' + e.estimated_price.toFixed(2) : 'TBC'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  // Total
+  html += `<div class="total-bar">
+    <div class="label">Estimated Materials Total</div>
+    <div class="amount">£${data.total_estimated_materials.toFixed(2)}</div>
+    <div style="color:#888;margin-top:8px;font-size:0.8em">${data.pricing_errors} items need manual pricing</div>
+  </div>`;
+
+  results.innerHTML = html;
+
+  // Scroll to results
+  results.scrollIntoView({ behavior: 'smooth' });
+}
+</script>
+</body>
+</html>
