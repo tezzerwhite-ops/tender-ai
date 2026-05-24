@@ -453,29 +453,30 @@ async def api_upload(files: List[UploadFile] = File(...), project_name: str = Fo
         cat = classification["category"]
         conf = classification["confidence"]
         
-        if cat == "schedule" and conf >= 0.3:
-            # Extract tables from schedule PDFs — highest quality data
+        if cat == "schedule":
+            # Try table extraction first for schedule-classified files
             tables = extract_tables_from_pdf(filepath)
             schedule_equipment = parse_schedule_rows(tables)
             if schedule_equipment:
                 results["schedules_found"] += 1
                 all_equipment.extend(schedule_equipment)
-            else:
-                # Fallback: table detection failed, try regex on schedule text
-                all_equipment.extend(extract_equipment(text))
-        
-        elif cat in ("specification", "mechanical", "electrical") and conf >= 0.2:
-            # Specs and trade documents — regex extraction
+            # Always also try regex on schedule text as fallback
             all_equipment.extend(extract_equipment(text))
-            # Also try table extraction as secondary source
+        
+        elif cat in ("specification", "mechanical", "electrical"):
+            # Specs and trade documents — regex extraction + table backup
+            all_equipment.extend(extract_equipment(text))
             tables = extract_tables_from_pdf(filepath)
             extra = parse_schedule_rows(tables)
             if extra:
                 results["schedules_found"] += 1
                 all_equipment.extend(extra)
         
-        # Drawings and low-confidence files: skip equipment extraction
-        # (drawings have no equipment data — just title blocks)
+        elif cat == "general" and len(text) > 200:
+            # Unknown but has text — try basic extraction
+            all_equipment.extend(extract_equipment(text))
+        
+        # Drawings (text < 200 chars): skip — just title blocks
     
     # Deduplicate equipment by item text
     seen = set()
