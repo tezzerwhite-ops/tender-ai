@@ -64,8 +64,12 @@ def classify_document(text: str, filename: str) -> Dict[str, float]:
     
     # Boost filename hints
     fn_lower = filename.lower()
-    if "drg" in fn_lower or "drawing" in fn_lower:
+    if "drg" in fn_lower or "drawing" in fn_lower or "drw" in fn_lower:
         scores["drawing"] = max(scores.get("drawing", 0), 0.8)
+    # "drawing pack" or "cat a drawing pack" is a drawing, not a schedule
+    if "drawing pack" in fn_lower or "drg pack" in fn_lower:
+        scores["drawing"] = 0.9
+        scores["schedule"] = scores.get("schedule", 0) * 0.3  # suppress schedule
     if "spec" in fn_lower:
         scores["specification"] = max(scores.get("specification", 0), 0.8)
     if "sch" in fn_lower or "schedule" in fn_lower:
@@ -241,38 +245,63 @@ def parse_schedule_rows(rows: List[List[str]]) -> List[Dict]:
 
 # ── Equipment Extraction ─────────────────────────────────────────
 EQUIPMENT_PATTERNS = {
-    "boiler": r"(?i)(boiler|gas boiler|combi boiler|system boiler|oil boiler|condensing boiler)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "pump": r"(?i)(pump|circulator|circulating pump|heating pump|booster pump|shower pump|accelerator)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "valve": r"(?i)(zone valve|motorised valve|thermostatic valve|pressure relief|isolating valve|gate valve|ball valve|butterfly valve|control valve|mixing valve)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "cylinder": r"(?i)(hot water cylinder|unvented cylinder|megaflo|heatrae|indirect cylinder|direct cylinder|buffer vessel|thermal store|calorifier)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "radiator": r"(?i)(radiator|panel radiator|column radiator|towel rail|designer radiator|kickspace|lst radiator|convector)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "fan_coil": r"(?i)(fan coil unit|fcu|fan coil|fan convector)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "air_handler": r"(?i)(air handling unit|ahu|air handler|rooftop unit|rtu)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "heat_recovery": r"(?i)(heat recovery|mvhr|hrv|heat exchanger|plate heat exchanger|phe)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "expansion": r"(?i)(expansion vessel|pressure vessel|accumulator|expansion tank)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "controls": r"(?i)(programmer|thermostat|smart thermostat|zone controller|wiring centre|nest|hive|tado|heatmiser|time clock)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "consumer_unit": r"(?i)(consumer unit|distribution board|fuse board|switchboard|panel board|mcb board)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "luminaire": r"(?i)(luminaire|light fitting|led panel|troffer|downlight|floodlight|bulkhead|batten)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "cable": r"(?i)(swa cable|armoured cable|fp200|fire cable|data cable|cat6|cat6a|tray cable)[s]?\s*[-–—:]?\s*(.{5,100})",
-    "pipe": r"(?i)(copper tube|copper pipe|steel tube|stainless pipe|plastic pipe|speedfit|hep2o|mapress|geberit)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "boiler": r"(?i)(boiler|gas boiler|combi boiler|system boiler|oil boiler|condensing boiler)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "pump": r"(?i)(pump|circulator|circulating pump|heating pump|booster pump|shower pump|accelerator)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "valve": r"(?i)(zone valve|motorised valve|thermostatic valve|pressure relief|isolating valve|gate valve|ball valve|butterfly valve|control valve|mixing valve)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "cylinder": r"(?i)(hot water cylinder|unvented cylinder|megaflo|heatrae|indirect cylinder|direct cylinder|buffer vessel|thermal store|calorifier)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "radiator": r"(?i)(radiator|panel radiator|column radiator|towel rail|designer radiator|kickspace|lst radiator|convector)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "fan_coil": r"(?i)(fan coil unit|fcu|fan coil|fan convector)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "air_handler": r"(?i)(air handling unit|ahu|air handler|rooftop unit|rtu)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "heat_recovery": r"(?i)(heat recovery|mvhr|hrv|heat exchanger|plate heat exchanger|phe)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "expansion": r"(?i)(expansion vessel|pressure vessel|accumulator|expansion tank)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "controls": r"(?i)(programmer|thermostat|smart thermostat|zone controller|wiring centre|nest|hive|tado|heatmiser|time clock)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "consumer_unit": r"(?i)(consumer unit|distribution board|fuse board|switchboard|panel board|mcb board)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "luminaire": r"(?i)(luminaire|light fitting|led panel|troffer|downlight|floodlight|bulkhead|batten)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "cable": r"(?i)(swa cable|armoured cable|fp200|fire cable|data cable|cat6|cat6a|tray cable)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "pipe": r"(?i)(copper tube|copper pipe|steel tube|stainless pipe|plastic pipe|speedfit|hep2o|mapress|geberit)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
 }
+
+# Spec-prose keywords — if the extracted item contains these, it's not equipment
+PROSE_FILTER = [
+    "shall", "fitted on", "discharge from", "connect into", "allow for",
+    "each service", "range of", "accordance", "specified", "approved",
+    "installed", "supplied", "contractor", "subcontractor", "testing",
+    "commissioning", "maintenance", "access", "provision", "complete with",
+    "as per", "to bs", "to en", "standard", "schedule of", "drawing no",
+    "refer to", "note:", "typical", "indicative",  "allow", "ensure",
+]
 
 
 def extract_equipment(text: str) -> List[Dict]:
-    """Extract equipment items from schedule/specification text."""
+    """Extract equipment items from schedule/specification text.
+    Filters out spec prose (items containing 'shall', 'fitted', etc.)"""
     found = []
     seen = set()
     
     for category, pattern in EQUIPMENT_PATTERNS.items():
         matches = re.finditer(pattern, text)
         for m in matches:
-            item = m.group(0).strip()[:120]
+            item = m.group(0).strip()
+            
+            # Reject if too long (spec prose, not equipment)
+            if len(item) > 80:
+                continue
+            
+            # Reject if it contains spec-prose language
+            item_lower = item.lower()
+            if any(kw in item_lower for kw in PROSE_FILTER):
+                continue
+            
+            # Reject single-word nonsense (like "Phenolic")
+            if len(item.split()) <= 1:
+                continue
+            
             if item not in seen:
                 seen.add(item)
                 found.append({
                     "category": category,
-                    "item": item,
-                    "estimated_price": None,  # Will be populated
+                    "item": item[:120],
+                    "estimated_price": None,
                     "source": "extracted",
                 })
     
