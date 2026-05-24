@@ -252,7 +252,7 @@ EQUIPMENT_PATTERNS = {
     "radiator": r"(?i)(radiator|panel radiator|column radiator|towel rail|designer radiator|kickspace|lst radiator|convector)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
     "fan_coil": r"(?i)(fan coil unit|fcu|fan coil|fan convector)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
     "air_handler": r"(?i)(air handling unit|ahu|air handler|rooftop unit|rtu)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
-    "heat_recovery": r"(?i)(heat recovery|mvhr|hrv|heat exchanger|plate heat exchanger|phe)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
+    "heat_recovery": r"(?i)\b(heat recovery|mvhr|hrv|heat exchanger|plate heat exchanger|phe)\b[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
     "expansion": r"(?i)(expansion vessel|pressure vessel|accumulator|expansion tank)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
     "controls": r"(?i)(programmer|thermostat|smart thermostat|zone controller|wiring centre|nest|hive|tado|heatmiser|time clock)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
     "consumer_unit": r"(?i)(consumer unit|distribution board|fuse board|switchboard|panel board|mcb board)[s]?\s*[-–—:]?\s*([^.\n]{3,40})",
