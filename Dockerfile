@@ -2,7 +2,7 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-RUN mkdir -p /app/uploads /app/output /app/pricing
+RUN mkdir -p /app/uploads /app/output /app/pricing /app/static
 
 RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
 
