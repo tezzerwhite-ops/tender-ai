@@ -74,6 +74,24 @@ def classify_document(text: str, filename: str) -> Dict[str, float]:
         scores["mechanical"] = max(scores.get("mechanical", 0), 0.7)
     if "elec" in fn_lower:
         scores["electrical"] = max(scores.get("electrical", 0), 0.7)
+
+    # Auto-detect schedule from table patterns
+    lines = text_lower.split('\n')
+    tabular_lines = [l for l in lines if '\t' in l or '|' in l or l.count(',') >= 2]
+    has_equipment_headers = any(h in text_lower for h in ['qty', 'quantity', 'unit', 'rate', 'total', 'description', 'model', 'make', 'supplier'])
+    amount_lines = len([l for l in lines if re.search(r'\d+\.\d{2}', l)])
+    
+    if len(tabular_lines) >= 3 and has_equipment_headers:
+        scores["schedule"] = max(scores.get("schedule", 0), 0.85)
+    elif len(tabular_lines) >= 10 and amount_lines >= 5:
+        scores["schedule"] = max(scores.get("schedule", 0), 0.75)
+    
+    # Boost specification if it contains equipment mentions
+    equip_count = 0
+    for pattern in EQUIPMENT_PATTERNS.values():
+        equip_count += len(re.findall(pattern, text_lower))
+    if equip_count >= 3 and scores.get("specification", 0) > 0:
+        scores["specification"] = min(scores["specification"] + 0.2, 1.0)
     
     # Best match (or "drawing" for PDFs with no clear text — likely drawings)
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -99,18 +117,144 @@ def extract_text_from_pdf(filepath: str) -> str:
         return ""
 
 
+def extract_tables_from_pdf(filepath: str) -> List[List[str]]:
+    """Extract structured tables from a PDF using pymupdf table detection.
+    Returns list of table rows (each row is a list of cell strings)."""
+    try:
+        import fitz
+        doc = fitz.open(filepath)
+        all_rows = []
+        for page in doc:
+            tables = page.find_tables()
+            for table in tables:
+                rows = table.extract()
+                if rows:
+                    all_rows.extend(rows)
+        doc.close()
+        return all_rows
+    except ImportError:
+        return []
+    except Exception:
+        return []
+
+
+def parse_schedule_rows(rows: List[List[str]]) -> List[Dict]:
+    """Parse table rows looking for equipment schedule data.
+    Detects header row (with Qty/Unit/Rate/Description columns) and extracts data rows."""
+    if not rows:
+        return []
+    
+    equipment = []
+    # Find header row index and column positions
+    header_idx = -1
+    col_map = {}
+    header_keywords = {
+        'qty': ['qty', 'quantity', 'no.', 'count', 'qnty', 'nr'],
+        'description': ['description', 'item', 'equipment', 'details', 'name', 'model'],
+        'unit': ['unit', 'uom'],
+        'rate': ['rate', 'price', 'cost', 'each', 'total'],
+        'supplier': ['supplier', 'make', 'manufacturer'],
+    }
+    
+    for i, row in enumerate(rows):
+        row_lower = [str(c).lower().strip() for c in row]
+        row_text = ' '.join(row_lower)
+        matches = 0
+        for header_set in header_keywords.values():
+            if any(h in row_text for h in header_set):
+                matches += 1
+        if matches >= 3:
+            header_idx = i
+            # Map columns
+            for j, cell in enumerate(row_lower):
+                for col_name, keywords in header_keywords.items():
+                    if any(kw == cell or kw in cell for kw in keywords):
+                        col_map[col_name] = j
+            break
+    
+    if header_idx < 0 or 'description' not in col_map:
+        return []
+    
+    # Extract data rows
+    for row in rows[header_idx + 1:]:
+        cells = [str(c).strip() for c in row]
+        if len(cells) <= col_map.get('description', 0):
+            continue
+        
+        description = cells[col_map['description']] if 'description' in col_map else ''
+        if not description or len(description) < 3:
+            continue
+        
+        qty = cells[col_map['qty']] if 'qty' in col_map and col_map['qty'] < len(cells) else '1'
+        rate = cells[col_map['rate']] if 'rate' in col_map and col_map['rate'] < len(cells) else ''
+        
+        # Clean up qty — extract first number
+        qty_num = 1
+        qty_match = re.search(r'(\d+)', str(qty))
+        if qty_match:
+            qty_num = int(qty_match.group(1))
+        
+        # Clean up rate — extract price
+        rate_val = None
+        rate_match = re.search(r'[\d,]+\.?\d*', str(rate).replace(',', ''))
+        if rate_match:
+            try:
+                rate_val = float(rate_match.group())
+            except ValueError:
+                pass
+        
+        item_text = f"{description} (Qty: {qty_num})"
+        if rate_val:
+            item_text += f" [Schedule rate: £{rate_val:.2f}]"
+        
+        # Categorize
+        cat = "general"
+        desc_lower = description.lower()
+        for category, patterns in [
+            ("boiler", ["boiler", "combi", "system boiler"]),
+            ("pump", ["pump", "circulator", "accelerator"]),
+            ("valve", ["valve", "motorised", "actuator"]),
+            ("cylinder", ["cylinder", "megaflo", "buffer", "vessel"]),
+            ("radiator", ["radiator", "panel", "towel rail", "column"]),
+            ("fan_coil", ["fan coil", "fcu"]),
+            ("air_handler", ["ahu", "air handling"]),
+            ("heat_recovery", ["mvhr", "heat recovery", "hrv"]),
+            ("consumer_unit", ["consumer unit", "distribution board", "mcb"]),
+            ("luminaire", ["luminaire", "led panel", "downlight", "light"]),
+            ("cable", ["cable", "swa", "fp200", "cat6"]),
+            ("pipe", ["pipe", "tube", "copper", "speedfit"]),
+        ]:
+            if any(p in desc_lower for p in patterns):
+                cat = category
+                break
+        
+        equipment.append({
+            "category": cat,
+            "item": item_text[:150],
+            "estimated_price": rate_val if rate_val else None,
+            "source": "schedule_table",
+            "quantity": qty_num,
+        })
+    
+    return equipment
+
+
 # ── Equipment Extraction ─────────────────────────────────────────
 EQUIPMENT_PATTERNS = {
-    "boiler": r"(?i)(boiler|gas boiler|combi boiler|system boiler|oil boiler)[s]?\s*[-–—]?\s*(.{5,80})",
-    "pump": r"(?i)(circulator|circulating pump|heating pump|booster pump|shower pump)[s]?\s*[-–—]?\s*(.{5,80})",
-    "valve": r"(?i)(zone valve|motorised valve|thermostatic valve|pressure relief|isolating valve|gate valve|ball valve|butterfly valve)[s]?\s*[-–—]?\s*(.{5,80})",
-    "cylinder": r"(?i)(hot water cylinder|unvented cylinder|megaflo|heatrae|indirect cylinder|direct cylinder)[s]?\s*[-–—]?\s*(.{5,80})",
-    "radiator": r"(?i)(radiator|panel radiator|column radiator|towel rail|designer radiator|kickspace)[s]?\s*[-–—]?\s*(.{5,80})",
-    "fan_coil": r"(?i)(fan coil unit|fcu|fan coil)[s]?\s*[-–—]?\s*(.{5,80})",
-    "air_handler": r"(?i)(air handling unit|ahu|air handler)[s]?\s*[-–—]?\s*(.{5,80})",
-    "heat_recovery": r"(?i)(heat recovery|mvhr|hrv|heat exchanger)[s]?\s*[-–—]?\s*(.{5,80})",
-    "expansion": r"(?i)(expansion vessel|pressure vessel|accumulator)[s]?\s*[-–—]?\s*(.{5,80})",
-    "controls": r"(?i)(programmer|thermostat|smart thermostat|zone controller|wiring centre|nest|hive|tado|heatmiser)[s]?\s*[-–—]?\s*(.{5,80})",
+    "boiler": r"(?i)(boiler|gas boiler|combi boiler|system boiler|oil boiler|condensing boiler)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "pump": r"(?i)(pump|circulator|circulating pump|heating pump|booster pump|shower pump|accelerator)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "valve": r"(?i)(zone valve|motorised valve|thermostatic valve|pressure relief|isolating valve|gate valve|ball valve|butterfly valve|control valve|mixing valve)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "cylinder": r"(?i)(hot water cylinder|unvented cylinder|megaflo|heatrae|indirect cylinder|direct cylinder|buffer vessel|thermal store|calorifier)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "radiator": r"(?i)(radiator|panel radiator|column radiator|towel rail|designer radiator|kickspace|lst radiator|convector)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "fan_coil": r"(?i)(fan coil unit|fcu|fan coil|fan convector)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "air_handler": r"(?i)(air handling unit|ahu|air handler|rooftop unit|rtu)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "heat_recovery": r"(?i)(heat recovery|mvhr|hrv|heat exchanger|plate heat exchanger|phe)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "expansion": r"(?i)(expansion vessel|pressure vessel|accumulator|expansion tank)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "controls": r"(?i)(programmer|thermostat|smart thermostat|zone controller|wiring centre|nest|hive|tado|heatmiser|time clock)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "consumer_unit": r"(?i)(consumer unit|distribution board|fuse board|switchboard|panel board|mcb board)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "luminaire": r"(?i)(luminaire|light fitting|led panel|troffer|downlight|floodlight|bulkhead|batten)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "cable": r"(?i)(swa cable|armoured cable|fp200|fire cable|data cable|cat6|cat6a|tray cable)[s]?\s*[-–—:]?\s*(.{5,100})",
+    "pipe": r"(?i)(copper tube|copper pipe|steel tube|stainless pipe|plastic pipe|speedfit|hep2o|mapress|geberit)[s]?\s*[-–—:]?\s*(.{5,100})",
 }
 
 
@@ -223,27 +367,28 @@ PRICE_DB = {
 
 
 def price_equipment(item: str) -> Optional[float]:
-    """Find best price match for an equipment item."""
+    """Find best price match for an equipment item using fuzzy matching."""
     item_lower = item.lower()
     
-    # Direct match
+    # Direct match: the entire key appears as a substring
     for key, price in PRICE_DB.items():
-        if key in item_lower:
+        if key in item_lower or item_lower in key:
             return price
     
-    # Partial match — check each word
-    words = item_lower.split()
+    # Token overlap: count how many key words appear anywhere in the item
+    item_words = set(item_lower.split())
     best_score = 0
     best_price = None
     
     for key, price in PRICE_DB.items():
         key_words = key.split()
-        score = sum(1 for kw in key_words if any(kw in w for w in words))
+        # Count words from key that appear in item (substring match, not just whole-word)
+        score = sum(1 for kw in key_words if kw in item_lower)
         if score > best_score:
             best_score = score
             best_price = price
     
-    if best_score >= 3:
+    if best_score >= 2:
         return best_price
     
     return None
@@ -278,17 +423,18 @@ async def api_upload(files: List[UploadFile] = File(...), project_name: str = Fo
         filepath.write_bytes(content)
         saved_files.append({"filename": file.filename, "path": str(filepath), "size": len(content)})
     
-    # Process each document
+    # Process each document — classify first, then extract
     results = {
         "project_id": project_id,
         "project_name": project_name,
         "files_processed": len(saved_files),
         "classified": [],
         "equipment_extracted": [],
+        "schedules_found": 0,
         "pricing_errors": 0,
     }
     
-    all_text = ""
+    all_equipment = []
     for f in saved_files:
         filepath = f["path"]
         if filepath.lower().endswith('.pdf'):
@@ -302,10 +448,43 @@ async def api_upload(files: List[UploadFile] = File(...), project_name: str = Fo
             "category": classification["category"],
             "confidence": classification["confidence"],
         })
-        all_text += "\n" + text
+        
+        # SMART ROUTING: Different strategy per document type
+        cat = classification["category"]
+        conf = classification["confidence"]
+        
+        if cat == "schedule" and conf >= 0.3:
+            # Extract tables from schedule PDFs — highest quality data
+            tables = extract_tables_from_pdf(filepath)
+            schedule_equipment = parse_schedule_rows(tables)
+            if schedule_equipment:
+                results["schedules_found"] += 1
+                all_equipment.extend(schedule_equipment)
+            else:
+                # Fallback: table detection failed, try regex on schedule text
+                all_equipment.extend(extract_equipment(text))
+        
+        elif cat in ("specification", "mechanical", "electrical") and conf >= 0.2:
+            # Specs and trade documents — regex extraction
+            all_equipment.extend(extract_equipment(text))
+            # Also try table extraction as secondary source
+            tables = extract_tables_from_pdf(filepath)
+            extra = parse_schedule_rows(tables)
+            if extra:
+                results["schedules_found"] += 1
+                all_equipment.extend(extra)
+        
+        # Drawings and low-confidence files: skip equipment extraction
+        # (drawings have no equipment data — just title blocks)
     
-    # Extract equipment from all schedules / spec sheets
-    equipment = extract_equipment(all_text)
+    # Deduplicate equipment by item text
+    seen = set()
+    equipment = []
+    for e in all_equipment:
+        key = e["item"].lower()[:80]
+        if key not in seen:
+            seen.add(key)
+            equipment.append(e)
     
     # Price the equipment
     for item in equipment:
